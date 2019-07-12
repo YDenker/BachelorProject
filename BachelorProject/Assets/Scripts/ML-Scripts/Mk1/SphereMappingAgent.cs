@@ -73,6 +73,7 @@ public class SphereMappingAgent : Agent
     public override void AgentAction(float[] vectorAction, string textAction)
     {
         //Action, size = 3
+        Debug.Log((int)(vectorAction[0]*100));
         Vector3 actionVector = new Vector3(vectorAction[0], vectorAction[1], vectorAction[2]);
         Vector3 nextPoint =  actionVector + previousPoint;
 
