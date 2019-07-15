@@ -15,5 +15,5 @@ MonoBehaviour:
   Randomize: 0
   radius: 6
   attemptedVerticesPerFace: 3
-  approximateVerticesTotal: 12
-  MarginOfError: 0
+  approximateVerticesTotal: 100
+  MarginOfError: 0.5

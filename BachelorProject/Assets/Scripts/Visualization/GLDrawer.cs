@@ -18,24 +18,19 @@ public class GLDrawer : MonoBehaviour
 
     public Material material;
 
-    private static Dictionary<string, List<Line>> lines = new Dictionary<string, List<Line>>();
+    private static List<Line> lines = new List<Line>();
 
-    public static void AddLine(string key, Line line) => lines[key].Add(line);
-    public static void AddListOfLines(string key, List<Line> lineList) => lines.Add(key, lineList);
-    public static void ClearLines(string key) => lines[key].Clear();
-    public static void RemoveLines(string key) => lines.Remove(key);
+    public static void AddLine(Line line) => lines.Add(line);
+    public static void ClearLines() => lines.Clear();
 
     private void OnPostRender()
     {
         GL.Begin(GL.LINES);
         material.SetPass(0);
-        foreach (var list in lines.Values)
+        foreach (var line in lines)
         {
-            for (int index = 0; index < list.Count; index++)
-            {
-                GL.Vertex(list[index].a);
-                GL.Vertex(list[index].b);
-            }
+            GL.Vertex(line.a);
+            GL.Vertex(line.b);
         }
         GL.End();
     }

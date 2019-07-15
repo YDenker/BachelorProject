@@ -7,7 +7,9 @@ public class SphereMappingAgentMk2 : Agent
 {
     [SerializeField]
     private FakePlayerInput sphereParams;
-
+    [SerializeField]
+    private GameObject debug;
+    private List<GameObject> debugs = new List<GameObject>();
     private float radius;
     private int attemptedVerticesPerFace;
     private int approximateVerticesTotal;
@@ -20,11 +22,11 @@ public class SphereMappingAgentMk2 : Agent
     private bool shapeFinished = false;
 
     private int currentShapeEdges = 0;
-    private int currentEdgeLength = 0;
+    private float currentEdgeLength = 0;
 
-    private Vector3 previousPoint = Vector3.zero;  // zu Vertex ändern!
+    private Vertex previousVert;
 
-    private Vector3 shapeStarter = Vector3.zero; // zu Vertex ändern!
+    private Vertex shapeStarter;
 
     private Vector3 environmenCenter = Vector3.zero;
 
@@ -43,12 +45,26 @@ public class SphereMappingAgentMk2 : Agent
 
         vertices = new List<Vertex>();
 
-        previousPoint = environmenCenter + Vector3.one * radius;
+        previousVert = new Vertex(environmenCenter + Vector3.one.normalized * radius,0);
+        shapeStarter = previousVert;
 
         allEdges = 0;
         shapeFinished = false;
         currentShapeEdges = 0;
         currentEdgeLength = 0;
+
+        vertices.Add(previousVert);
+
+        GLDrawer.ClearLines();
+
+        foreach (var debugger in debugs)
+        {
+            GameObject.Destroy(debugger);
+        }
+        debugs = new List<GameObject>
+        {
+            GameObject.Instantiate(debug, previousVert.Position, Quaternion.identity)
+        };
     }
 
     public override void AgentReset()
@@ -67,39 +83,105 @@ public class SphereMappingAgentMk2 : Agent
         AddVectorObs(shapeFinished);
         AddVectorObs(currentShapeEdges);
         AddVectorObs(currentEdgeLength);
-        AddVectorObs(previousPoint-environmenCenter);
-        AddVectorObs(shapeStarter - environmenCenter);
+        AddVectorObs(previousVert.Position - environmenCenter);
+        AddVectorObs(shapeStarter.Position - environmenCenter);
     }
 
     public override void AgentAction(float[] vectorAction, string textAction)
     {
-        //action, size = 4
-        Vertex nextVector = new Vertex(new Vector3(vectorAction[0], vectorAction[1], vectorAction[2]),previousPoint);
-        bool finishShape = vectorAction[3] >= 0 ? true : false;
+        // Action-size = 4
+        Vertex nextVertex = new Vertex(new Vector3(vectorAction[0], vectorAction[1], vectorAction[2]),previousVert); // The Agent chooses the next Vertex
+
+        // Incrementing the edge counts
+        currentShapeEdges++;
+        allEdges++;
+
+        bool finishShape = vectorAction[3] <= 0 ? true : false; // The Agent should choose when to close the shape
+
         if (finishShape && !shapeFinished)
         {
-            nextVector = NearestVertex(nextVector.Position.normalized * radius + environmenCenter);
+            nextVertex = NearestVertex(nextVertex.Position.normalized * radius + environmenCenter);
             shapeFinished = true;
+
+            //GLDrawer.AddLine(new GLDrawer.Line(nextVertex.Position, previousVert.Position));
+
+            //Rewards
+            int shapeEdges = ShortestPathToShapeStart(nextVertex, previousVert,0) + currentShapeEdges;
+            int shapeOff = Mathf.Abs(attemptedVerticesPerFace - shapeEdges);
+
+            if (shapeEdges < currentShapeEdges)
+                SetReward(-1); // Negative Reward for a too large shape size
+            else
+            {
+                if (shapeEdges <= 2)
+                {
+                    // Negative Reward for a too small shape size and reset
+                    SetReward(-10);
+                    Done();
+                }
+                else // Positive Reward for approximate shape size
+                    SetReward(1 / (shapeOff + 1));
+            }
+            SetLineLenghtReward((previousVert.Position - nextVertex.Position).magnitude);
+
+            //Next Shape Setup
+            previousVert = SelectOptimalNewShapeVertex();
+            shapeStarter = previousVert;
+            currentShapeEdges = 0;
+            currentEdgeLength = 0;
         }
         else if(shapeFinished)
         {
             shapeFinished = false;
-            nextVector.Position = nextVector.Position.normalized * radius + environmenCenter;
+            AddVertex(nextVertex);
         }
         else
         {
-            nextVector.Position = nextVector.Position.normalized * radius + environmenCenter;
+            AddVertex(nextVertex);
+            SetLineLenghtReward((previousVert.Position - nextVertex.Position).magnitude);
         }
 
+        // Calculating the new edge length
+        currentEdgeLength = (previousVert.Position - nextVertex.Position).magnitude;
 
-        if(approximateVerticesTotal < vertices.Count + (vertices.Count * marginOfError) || CheckVertexConnectionsPowerOfThree())
+        if (approximateVerticesTotal < vertices.Count + (vertices.Count * marginOfError) || CheckVertexConnectionsPowerOfThree())
             IterationFinished();
     }
+
+    private void SetLineLenghtReward(float length)
+    {
+        float offset = Mathf.Abs(currentEdgeLength - length);
+
+        SetReward(1 / (offset + 1));
+    }
+
+    private void AddVertex(Vertex addition) // Also sets th previous Vert correctly and draws a Line
+    {
+        addition.Position = addition.Position.normalized * radius + environmenCenter;
+        addition.Index = vertices.Count;
+        vertices.Add(addition);
+        vertices[previousVert.Index].Connectors.Add(addition);
+
+        //GLDrawer.AddLine(new GLDrawer.Line(addition.Position, previousVert.Position));
+        debugs.Add(GameObject.Instantiate(debug, addition.Position, Quaternion.identity));
+
+        previousVert = vertices[previousVert.Index];
+    } 
 
     private void IterationFinished()
     {
         Done();
     }
+
+    private Vertex SelectOptimalNewShapeVertex()
+    {
+        foreach (var vert in vertices)
+        {
+            if (vert.Connectors.Count % 3 != 0 || vert.Connectors.Count == 0)
+                return vert;
+        }
+        return new Vertex();
+    } // Select the next best Vertex to start a shape on
 
     private Vertex NearestVertex(Vector3 vec)
     {
@@ -113,18 +195,33 @@ public class SphereMappingAgentMk2 : Agent
         return tempVertex;
     }
 
-    private float DistanceToNearestPoint(Vector3 vec, Vector3 ignoreVec) // ignoreVec zu Vertex ändern!
+    private int ShortestPathToShapeStart(Vertex current, Vertex previous, int iteration) // recursive function
+    {
+        int i = 0;
+        foreach (var vert in current.Connectors)
+        {
+            if (vert.Equals(shapeStarter))
+                return iteration;
+            if (vert.Equals(previous) || iteration > attemptedVerticesPerFace + attemptedVerticesPerFace * marginOfError)
+                return -1;
+            int s = ShortestPathToShapeStart(vert, current, ++iteration);
+            i = s >= 0 ? Mathf.Max(s,i) : -1;
+        }
+        return i;
+    }
+
+    private float DistanceToNearestPoint(Vector3 vec, Vertex ignoreVex)
     {
         float distance = 0f;
         foreach (var vector in vertices)
         {
-            if (!vector.Equals(ignoreVec))
+            if (!vector.Equals(ignoreVex))
                 distance = Mathf.Max(distance, (vector.Position - vec).magnitude);
         }
         return distance;
     }
 
-    private bool CheckVertexConnectionsPowerOfThree()
+    private bool CheckVertexConnectionsPowerOfThree() // Gives Positive Rewards if true
     {
         bool allPO3 = true;
         foreach (var vert in vertices)
@@ -132,6 +229,7 @@ public class SphereMappingAgentMk2 : Agent
             if (vert.Connectors.Count % 3 != 0 || vert.Connectors.Count == 0)
                 return false;
         }
+        SetReward(100);
         return allPO3;
     }
 }
